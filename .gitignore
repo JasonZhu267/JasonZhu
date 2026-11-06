@@ -1,0 +1,5 @@
+server
+client
+*.o
+out.txt
+.DS_Store
