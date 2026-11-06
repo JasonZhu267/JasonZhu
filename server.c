@@ -128,10 +128,16 @@ int main(void){
 	uint16_t seq_num = 1;
         unsigned long data_packets = 0;
         unsigned long data_bytes = 0;
-        char line_buffer[MAX_DATA_SIZE];
+        char line_buffer[MAX_DATA_SIZE+1];
 
 	while(fgets(line_buffer, sizeof(line_buffer), file) != NULL){
 		size_t line_len = strlen(line_buffer);
+
+		// Cap new line len at 80 bytes
+		if(line_len > MAX_DATA_SIZE){
+			line_len = MAX_DATA_SIZE;
+		}
+
 		uint16_t count = htons((uint16_t)line_len);
 		uint16_t seq = htons(seq_num);
 

@@ -50,12 +50,20 @@ int main(void){
 	
 	// Prompting user for filename
 	printf("Enter filename: ");
-	if(scanf("%79s", filename) != 1){
+	if(fgets(filename, sizeof(filename), stdin) == NULL){
 		fprintf(stderr, "Invalid input: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
+	filename[strcspn(filename, "\n")] = '\0';
+
 	size_t filename_len = strlen(filename);
+
+	// Makes sure filename length is not 0 and capped at 80 bytes
+	if(filename_len == 0 || filename_len > MAX_DATA_SIZE){
+		fprintf(stderr, "Filename length must be between 1 and %d bytes.\n", MAX_DATA_SIZE);
+		exit(EXIT_FAILURE);
+	}
 
 	// Create TCP socket
 	client_socket = socket(AF_INET, SOCK_STREAM, 0);
