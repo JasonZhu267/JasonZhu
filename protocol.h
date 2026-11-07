@@ -38,9 +38,27 @@ static int serialize_packet(uint16_t type, uint16_t seq, uint16_t len, const cha
 
 }
 
-static int deserialize_packet(){
+static int deserialize_packet(const char *source_buffer, char *data, uint16_t *type, uint16_t *seq, uint16_t *len){
 
+	if (!source_buffer || !type || !seq || !len) {
+        	return -1;
+    	}
 	
+	uint16_t net_type;
+        uint16_t net_seq;
+        uint16_t net_len;
+	
+	memcpy(&net_type, source_buffer, 2);
+	memcpy(&net_seq, source_buffer + 4, 2);
+	memcpy(&net_len, source_buffer + 2, 2);
+
+	*type = ntohs(net_type);
+        *seq = ntohs(net_seq);
+        *len = ntohs(net_len);
+
+	if (*len > 0 && data != NULL) {
+        	memcpy(data, source_buffer + HEADER_SIZE, *len);
+    	}
 
 	return 0;
 
