@@ -30,6 +30,28 @@ int main(int argc, char *argv[]){
 	} 
 
 	// Create UDP Socket
+	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    	if (sockfd < 0) {
+        	fprintf(stderr, "Error: Socket Creation Failed\n");
+        	exit(EXIT_FAILURE);
+    	}
+
+    	struct sockaddr_in server_addr;
+    	memset(&server_addr, 0, sizeof(server_addr));
+    	server_addr.sin_family = AF_INET;
+    	server_addr.sin_addr.s_addr = INADDR_ANY;
+    	server_addr.sin_port = htons(port);
+
+        if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        	fprintf(stderr, "Error: Bind Failed\n");
+        	close(sockfd);
+        	exit(EXIT_FAILURE);
+        }
+
+        printf("Server listening on port %d...\n", port);
+
+	// Wait for client REQUEST packet
+	
 	
 
 }
