@@ -57,24 +57,24 @@ int main(int argc, char *argv[]) {
 	char request_buffer[MAX_PACKET_SIZE];
 	uint16_t seq = 1;
 	int request_len = serialize_packet(PKT_REQUEST, 0, strlen(filename), filename, strlen(filename), request_buffer);	
-	int sent_request = 0;
 	
 	printf("Sending request for file: %s\n", filename);
 	
 	// loop until packet starts arriving or handshake is completed
-	while(sent_request < 10){
+	
+	for(int i = 0; i < 5; i++){
 		lossy_sendto(sockfd, request_buffer, request_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
-		sent_request++;
-		break;
 	}	
 
 
 
 	// 4. Open file
-	char filename[256];
-	FILE *outfile = fopen(output_filename, "w");
+	char output_filename[256];
 	
-	printf("Saving received data to: %s\n", output_filename);
+	sprintf(output_filename, "received_%s", filename);
+        printf("Saving received data to: %s\n", output_filename);	
+
+	FILE *outfile = fopen(output_filename, "w");
 
 	if(!outfile){
 		fprintf(stderr, "Error: Failed to create output file %s\n", output_filename);
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
     	struct sockaddr_in from_addr;
     	socklen_t from_len = sizeof(from_addr);
 	
-	while(true){
+	while(1){
 		ssize_t n = recvfrom(sockfd, rcv_buffer, MAX_PACKET_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
 
 		if(n < 0){
@@ -104,26 +104,24 @@ int main(int argc, char *argv[]) {
 
 		if(from_addr.sin_addr.s_addr == server_addr.sin_addr.s_addr && from_addr.sin_port == server_addr.sin_port){
 			
-			if(n > HEADER_SIZE){
+			if(n >= HEADER_SIZE){
 				uint16_t packet_type;
 				uint16_t packet_seq;
 				uint16_t packet_len;
 				char data_buffer[MAX_DATA_SIZE];
 
-				deserialize_packet(rcv_buffer, data_buffer, &packet_type, &packet_seq, packet_len);
+				deserialize_packet(rcv_buffer, data_buffer, &packet_type, &packet_seq, &packet_len);
 				
 				// Check if packet is end of transmission packet
 				if (packet_type == PKT_EOT) {
-					
-					if(packet_seq == seq){
-						char ack_buffer[MAX_PACKET_SIZE];
-                                                int ack_len = serialize_packet(PKT_ACK, packet_seq, 0, NULL, 0, ack_buffer);
-						
-						printf("Received EOT packet %u.\n", pkt_seq);
-						lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
-						break;
-					}
 				
+					char ack_buffer[MAX_PACKET_SIZE];
+                                        int ack_len = serialize_packet(PKT_ACK, packet_seq, 0, NULL, 0, ack_buffer);
+					
+					printf("Received EOT packet %u.\n", packet_seq);
+					lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+					break;
+
 				}
 
 				// Handle incoming packets
@@ -139,6 +137,7 @@ int main(int argc, char *argv[]) {
                     				int ack_len = serialize_packet(PKT_ACK, seq, 0, NULL, 0, ack_buffer);
                     				
 						lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));	
+						seq++;
 					}
 				
 					else if(packet_seq < seq){
@@ -155,8 +154,8 @@ int main(int argc, char *argv[]) {
 						// Out-of-order packet
 						if(seq > 1){
 							char ack_buffer[MAX_PACKET_SIZE];
-                        				int ack_len = serialize_packet(PKT_ACK, expected_seq - 1, 0, NULL, 0, ack_buffer);
-                        				lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+                       					int ack_len = serialize_packet(PKT_ACK, seq - 1, 0, NULL, 0, ack_buffer);
+                       					lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
 						}
 					}
 				}
@@ -169,10 +168,10 @@ int main(int argc, char *argv[]) {
 	// 6. Print Statistics
 	printf("\n--- Client Statistics ---\n");
     	printf("Total data packets accepted: %d\n", packets_received);
-    	printf("Total bytes written to %s: %lld\n", filename, bytes_received);
+    	printf("Total bytes written to %s: %lld\n", output_filename, bytes_received);
     	printf("Duplicate/old packets handled: %d\n", duplicate_packets_dropped);
 
-	cloase(sockfd);
+	close(sockfd);
 	return 0;
 	
 }

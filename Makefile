@@ -4,12 +4,12 @@ CFLAGS = -Wall -Wextra -std=c99
 all: server client
 
 server: server.c
-	$(CC) $(CFLAGS) server.c -o server
+	$(CC) $(CFLAGS) server.c lossy.c -o server
 
 client: client.c
-	$(CC) $(CFLAGS) client.c -o client
+	$(CC) $(CFLAGS) client.c lossy.c -o client
 
 clean:
-	rm -f server client out.txt *.o
+	rm -f server client out.txt *.o received_*
 
 .PHONY: all clean
