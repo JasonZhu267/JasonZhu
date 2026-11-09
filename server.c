@@ -1,188 +1,264 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <unistd.h>
-#include <errno.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#define PORT 8080
-#define BACKLOG 5
-#define MAX_DATA_SIZE 80
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+#include <errno.h>
 
-// Helper function that loop until all bytes is sent over the TCP socket.
-// Return 0 when successful transmit or -1 for error.
-int send_all(int socket, const void *buffer, size_t len){
-	size_t total = 0;
-	const char *ptr = buffer;
-	while(total < len){
-		ssize_t sent = send(socket, ptr+total, len-total, 0);
-		if(sent <= 0){
-			return -1; // return an error for unexpected events
-		} 
-                total+=sent;
+#include "protocol.h"
+#include "lossy.h"
+
+int main(int argc, char *argv[]){
+
+	// 1. Validate Command Line Arguments
+	if(argc != 4){
+		fprintf(stderr, "Must contain only the program, port number, window size, and timeout\n");
+		exit(EXIT_FAILURE);
 	}
-	return 0;
-}
+	
+	int port = atoi(argv[1]);
+	int window_size = atoi(argv[2]);
+	int timeout = atoi(argv[3]);
 
-// Helper function that byte received over TCP socket
-// Return 0 when successful receive or -1 for error.
-int rcv(int socket, void *buffer, size_t len){
-	size_t total = 0;
-	char *ptr = buffer;
-        while(total < len){
-                ssize_t received = recv(socket, ptr+total, len-total, 0);
-                if(received <= 0){
-                        return -1; // return a error for unexpected events
-                }
-                total+=received;
+	if (window_size <= 0){
+		fprintf(stderr, "Error: Window size must be greater than 0.\n");
+		exit(EXIT_FAILURE);
+	} 
+
+	// 2. Create UDP Socket and Binding
+	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    	if (sockfd < 0) {
+        	fprintf(stderr, "Error: Socket Creation Failed\n");
+        	exit(EXIT_FAILURE);
+    	}
+
+    	struct sockaddr_in server_addr;
+    	memset(&server_addr, 0, sizeof(server_addr));
+    	server_addr.sin_family = AF_INET;
+    	server_addr.sin_addr.s_addr = INADDR_ANY;
+    	server_addr.sin_port = htons(port);
+
+        if(bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+        	fprintf(stderr, "Error: Bind Failed\n");
+        	close(sockfd);
+        	exit(EXIT_FAILURE);
         }
-        return 0;
-}
 
-int main(void){
-	
-        // initiate server    
-	int server_fd, client_socket;
-	struct sockaddr_in address;
-	socklen_t addrlen = sizeof(address);
-	server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	char filename[MAX_DATA_SIZE+1];
-	
-	// var for binding
-	int opt = 1;
-	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)); // Prevent error "Address already in use"	
-	
-	// Creating TCP socket
-	if(server_fd < 0){
-		fprintf(stderr, "Socket creation failed: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+        printf("Server listening on port %d...\n", port);
 
-	// Binding address and port
-	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT); // Network byte order
-
-	if(bind(server_fd, (struct sockaddr *) &address, sizeof(address)) < 0){
-                fprintf(stderr, "Bind failed: %s\n", strerror(errno));
-		close(server_fd);
-		exit(EXIT_FAILURE);
-	}
+	// 3. Wait for client REQUEST packet
+	struct sockaddr_in client_addr;
+	socklen_t client_len = sizeof(client_addr);
+	char rcv_buffer[MAX_PACKET_SIZE];
+	char filename[MAX_DATA_SIZE + 1];
+	memset(filename, 0, sizeof(filename));
+	uint16_t request_type;
+	uint16_t request_seq;
+	uint16_t request_len;
+	int received = 0;
+	
+	// Loop until a valid request from the client is received
+	while(!received){
+		ssize_t n = recvfrom(sockfd, rcv_buffer, MAX_PACKET_SIZE, 0, (struct sockaddr *)&client_addr, &client_len);
 		
-	// Listening for client connections
-	if(listen(server_fd, BACKLOG) < 0){
-                fprintf(stderr, "Listen failed: %s\n", strerror(errno));
-                close(server_fd);
-                exit(EXIT_FAILURE);
-        }
-
-	printf("Server listening on port %d\n", PORT);
-
-	// Accepting client connections
-	client_socket = accept(server_fd, (struct sockaddr *) &address, &addrlen);
-	if(client_socket < 0){
-                fprintf(stderr, "Accept failed: %s\n", strerror(errno));
-                close(server_fd);
-                exit(EXIT_FAILURE);
-        }
-	
-	// Receive filename packets
-	uint16_t count, seq;
-	if(rcv(client_socket, &count, sizeof(count)) < 0 || rcv(client_socket, &seq, sizeof(seq)) < 0){
-                fprintf(stderr, "Receive failed: %s\n", strerror(errno));
-		close(client_socket);
-                close(server_fd);  
-                exit(EXIT_FAILURE);
-        }
-
-	uint16_t filename_len = ntohs(count);
-        uint16_t filename_seq = ntohs(seq);
-
-	if(filename_seq != 0 || filename_len == 0 || filename_len > MAX_DATA_SIZE){
-//		fprintf(stderr, "Invalid filename packet received: %s\n", strerror(errno));
-		fprintf(stderr, "Rejected! seq=%u (expected 0), len=%u\n", filename_seq, filename_len);
-		close(client_socket);
-                close(server_fd);
-                exit(EXIT_FAILURE);
+		if(n >= HEADER_SIZE){
+			deserialize_packet(rcv_buffer, filename, &request_type, &request_seq, &request_len);
+			if((request_type == PKT_REQUEST) && (request_len > 0 && request_len <= MAX_DATA_SIZE)){
+				filename[request_len] = '\0';
+				received = 1;
+			}	
+		}
 	}
 
-	if(rcv(client_socket, filename, filename_len) < 0){
-                fprintf(stderr, "Cannot retrieve filename: %s\n", strerror(errno));
-                close(client_socket);
-                close(server_fd);
-                exit(EXIT_FAILURE);
-        }
+	printf("Received request for file %s\n", filename);
 
-	filename[filename_len]  = '\0';
+	// 4. Open file
 	FILE *file = fopen(filename, "r");
+	
 	if(!file){
-		fprintf(stderr, "Cannot open filename: %s\n", strerror(errno));
-                close(client_socket);
-                close(server_fd);
-                exit(EXIT_FAILURE);
-        }
+		fprintf(stderr, "Error: Failed to open file\n");
+		close(sockfd);
+		exit(EXIT_FAILURE);
+	}
 
-	// Read file and transmit data packets
-	uint16_t seq_num = 1;
-        unsigned long data_packets = 0;
-        unsigned long data_bytes = 0;
-        char line_buffer[MAX_DATA_SIZE+1];
+	// 5. Read File Lines for GBN Transmission
+	char file_lines[65536][MAX_DATA_SIZE];
+    	uint16_t line_len[65536];
+    	int total = 0;
 
-	while(fgets(line_buffer, sizeof(line_buffer), file) != NULL){
-		size_t line_len = strlen(line_buffer);
-
-		// Cap new line len at 80 bytes
-		if(line_len > MAX_DATA_SIZE){
-			line_len = MAX_DATA_SIZE;
-		}
-
-		uint16_t count = htons((uint16_t)line_len);
-		uint16_t seq = htons(seq_num);
-
-		if(send_all(client_socket, &count, sizeof(count)) < 0 || send_all(client_socket, &seq, sizeof(seq)) < 0){
-                	fprintf(stderr, "Failure sending packet header: %s\n", strerror(errno));
-                	close(client_socket);
-                	close(server_fd);
-                	exit(EXIT_FAILURE);
+	while(total < 65536){
+		int c;
+		int i = 0;
+		
+		while ((i < MAX_DATA_SIZE - 1) && ((c = fgetc(file)) != EOF)) {
+            		file_lines[total][i++] = (char)c;
+            		if (c == '\n'){
+				break;
+			}
         	}
 
-		if(send_all(client_socket, line_buffer, line_len) < 0){
-                        fprintf(stderr, "Failure sending packet info: %s\n", strerror(errno));
-                        close(client_socket);
-                        close(server_fd);
-                        exit(EXIT_FAILURE);
-                }
+		if (i == 0){
+			 break;
+		}
+        	
+		line_len[total] = i;
+        	total++;
+    	}
+    	fclose(file);
+
+	// 6. Go-Back-N Transmission
+	uint16_t curr = 1;
+	uint16_t next = 1;
+	int total_packet = total;
+	int transmission_ct = 0;
+	int timeout_ct = 0;
+	long long bytes_sent = 0;
+	char window_packet[window_size][MAX_PACKET_SIZE];
+	uint16_t window_packet_len[window_size];
+	
+	// Loop until all packets are acknowedged
+	while(curr <= total_packet){
+		while((next < (curr + window_size)) && (next <= total_packet)){
+			int line_index = next - 1;
+			
+			char send_buffer[MAX_PACKET_SIZE];
+			
+			int packet_len = serialize_packet(PKT_DATA, next, line_len[line_index],file_lines[line_index], line_len[line_index], send_buffer);
+			
+			int window_index = (next-1) % window_size;
+			
+			memcpy(window_packet[window_index], send_buffer, packet_len);
+			
+			window_packet_len[window_index] = packet_len;
+			
+			lossy_sendto(sockfd, send_buffer, packet_len, 0, (struct sockaddr *)&client_addr, client_len);	
+			
+			bytes_sent += line_len[line_index];
+
+			next++;
+		}
 		
-		printf("Packet %u transmitted with %u data bytes.\n", seq_num, (uint16_t)line_len);
-		data_packets++;
-		data_bytes+=line_len;
-		seq_num++;
+		// Monitor and handle timeouts
+		fd_set readfds;
+        	FD_ZERO(&readfds);
+        	FD_SET(sockfd, &readfds);
+
+		struct timeval tv;
+        	tv.tv_sec = timeout / 1000;
+        	tv.tv_usec = (timeout % 1000) * 1000;
+		
+		int return_value = select(sockfd + 1, &readfds, NULL, NULL, &tv);
+		
+		if(return_value < 0){
+			if(errno != EINTR){
+				fprintf(stderr, "Error: Failed to select\n");
+				break;
+			}
+		}
+
+		else if(return_value == 0){
+			timeout_ct++;
+			
+			for(uint16_t seq = curr; seq < next; seq++){
+				int window_index = (seq - 1) % window_size;
+				lossy_sendto(sockfd, window_packet[window_index], window_packet_len[window_index], 0, (struct sockaddr *)&client_addr, client_len);
+                		transmission_ct++;
+			}			
+		}
+
+		else{
+			char ack_buffer[MAX_PACKET_SIZE];
+            		struct sockaddr_in from_addr;
+            		socklen_t from_len = sizeof(from_addr);
+
+            		ssize_t n = recvfrom(sockfd, ack_buffer, MAX_PACKET_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
+            
+            		// Ignore packets from unauthorized sources
+            		if(from_addr.sin_addr.s_addr == client_addr.sin_addr.s_addr && from_addr.sin_port == client_addr.sin_port){
+
+            			if(n >= HEADER_SIZE){
+                			uint16_t ack_type;
+					uint16_t ack_seq;
+					uint16_t ack_len;
+                			char test_data[MAX_DATA_SIZE];
+                			deserialize_packet(ack_buffer, test_data, &ack_type, &ack_seq, &ack_len);
+
+                			// Check for cumulative ACK
+                			if(ack_type == PKT_ACK && ack_seq >= curr){
+                			    	curr = ack_seq + 1;
+						if(next < curr){
+							next = curr;
+						}
+               			 	}
+            			}			
+			}
+		}
 	}
 
-	fclose(file);
+	// 7. Termination
+	uint16_t eot_seq = total_packet + 1;
+	char eot_buffer[MAX_PACKET_SIZE];
+	int eot_len = serialize_packet(PKT_EOT, eot_seq, 0, NULL, 0, eot_buffer); 
+	int eot_ack = 0;
 
-	// End-of-Transmission Packet
-	uint16_t eot_count = htons(0);
-	uint16_t eot_seq = htons(seq_num);
+	// Acknowledge eot packet
+	while(!eot_ack){
+		lossy_sendto(sockfd, eot_buffer, eot_len, 0, (struct sockaddr *)&client_addr, client_len);
+		fd_set readfds;
+        	FD_ZERO(&readfds);
+        	FD_SET(sockfd, &readfds);
+
+        	struct timeval tv;
+        	tv.tv_sec = timeout / 1000;
+        	tv.tv_usec = (timeout % 1000) * 1000;
+		int return_value = select(sockfd + 1, &readfds, NULL, NULL, &tv);
 	
-	if(send_all(client_socket, &eot_count, sizeof(eot_count)) < 0 || send_all(client_socket, &eot_seq, sizeof(eot_seq)) < 0){
-                fprintf(stderr, "Failure sending EOT packet: %s\n", strerror(errno));
-                close(client_socket);
-                close(server_fd);
-                exit(EXIT_FAILURE);
-        }
+		if(return_value < 0){
+			if(errno != EINTR){
+				fprintf(stderr, "Error: Failed to select during EOT\n");
+				break;
+			}
+		}
+		else if(return_value == 0){
+			timeout_ct++;
+			lossy_sendto(sockfd, eot_buffer, eot_len, 0, (struct sockaddr *)&client_addr, client_len);
+			transmission_ct++;
+		}
+		else{
+			char ack_buffer[MAX_PACKET_SIZE];
+			struct sockaddr_in from_addr;
+            		socklen_t from_len = sizeof(from_addr);
+			ssize_t n = recvfrom(sockfd, ack_buffer, MAX_PACKET_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
+			
+			if((from_addr.sin_addr.s_addr == client_addr.sin_addr.s_addr) && (from_addr.sin_port == client_addr.sin_port && n >= HEADER_SIZE)){
+                		uint16_t ack_type;
+				uint16_t ack_seq;
+				uint16_t ack_len;
+                		char x[MAX_DATA_SIZE];
+                		deserialize_packet(ack_buffer, x, &ack_type, &ack_seq, &ack_len);
 
-	printf("End of Transmission Packet with sequence number %u transmitted with 0 data bytes\n", seq_num);
+                		if (ack_type == PKT_ACK && ack_seq == eot_seq) {
+                    			printf("EOT %u acknowledged\n", eot_seq);
+                    			eot_ack = 1;
+                		}
+            		}
+		}
+	}
 
-        
-        printf("Number of data packets transmitted: %lu\n", data_packets);
-        printf("Total number of data bytes transmitted: %lu\n", data_bytes);
 
-        // Close sockets
-        close(client_socket);
-        close(server_fd);
 
+	// 8. Print Statistics
+	printf("\n--- Server Statistics ---\n");
+    	printf("Original data packet count: %d\n", total_packet);
+    	printf("Retransmission count: %d\n", transmission_ct);
+    	printf("Total original data bytes: %lld\n", bytes_sent);
+    	printf("Timeout count: %d\n", timeout_ct);
+
+	close(sockfd);
 	return 0;
+
 }
