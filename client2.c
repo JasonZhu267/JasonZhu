@@ -85,10 +85,71 @@ int main(int argc, char *argv[]) {
 	
 
 	// 5. Go-Back-N
-	long long total_bytes_received = 0;
-    	int total_packets_received = 0;
+	long long bytes_received = 0;
+    	int packets_received = 0;
     	int duplicate_packets_dropped = 0;
+	char rcv_buffer[MAX_PACKET_SIZE];
+    	struct sockaddr_in from_addr;
+    	socklen_t from_len = sizeof(from_addr);
 	
+	while(true){
+		ssize_t n = recvfrom(sockfd, rcv_buffer, MAX_PACKET_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
+
+		if(n < 0){
+			if(errno != EINTR){
+				fprintf(stderr, "Error: Failed to recvfrom\n");
+				break;
+			}
+		}
+
+		if(from_addr.sin_addr.s_addr == server_addr.sin_addr.s_addr && from_addr.sin_port == server_addr.sin_port){
+			
+			if(n > HEADER_SIZE){
+				uint16_t packet_type;
+				uint16_t packet_seq;
+				uint16_t packet_len;
+				char data_buffer[MAX_DATA_SIZE];
+
+				deserialize_packet(rcv_buffer, data_buffer, &packet_type, &packet_seq, packet_len);
+				
+				// Check if packet is end of transmission packet
+				if (packet_type == PKT_EOT) {
+					
+					if(packet_seq == seq){
+						char ack_buffer[MAX_PACKET_SIZE];
+                                                int ack_len = serialize_packet(PKT_ACK, packet_seq, 0, NULL, 0, ack_buffer);
+						
+						printf("Received EOT packet %u.\n", pkt_seq);
+						lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+						break;
+					}
+				
+				}
+
+				// Handle incoming packets
+				if(){
+					
+				}
+				
+				else if(){
+					
+				}
+				
+				else{
+					
+				}
+
+			}
+			
+		}
+
+
+
+
+	}
+
+
+
 	// 6. Print Statistics
 		
 
