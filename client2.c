@@ -48,7 +48,29 @@ int main(int argc, char *argv[]) {
     	}
 
 	// 3. Send Packet to Server
+	char request_buffer[MAX_PACKET_SIZE];
+	uint16_t seq = 1;
+	int request_len = serialize_packet(PKT_REQUEST, 0, strlen(filename), filename, strlen(filename), request_buffer);	
+	int sent_request = 0;
 	
+	printf("Sending request for file: %s\n", filename);
+	
+	// loop until packet starts arriving or handshake is completed
+	while(sent_request < 10){
+		lossy_sendto(sockfd, request_buffer, request_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+		sent_request++;
+		break;
+	}	
+
+
+	// 4. Open file
+
+
+	// 5. Go-Back-N
+
+	
+	// 6. Print Statistics
+		
 
 
 
