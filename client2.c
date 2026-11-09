@@ -13,6 +13,8 @@
 
 int main(int argc, char *argv[]) {
 
+
+
 	// 1. Valid Command Line Arguments
 	if(argc != 4){
         	fprintf(stderr, "Only include program, server_ip, port, and filename\n");
@@ -27,6 +29,8 @@ int main(int argc, char *argv[]) {
         	fprintf(stderr, "Error: Filename is too long.\n");
         	exit(EXIT_FAILURE);
     	}
+
+
 	
 	// 2. UDP Socket
 	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -47,6 +51,8 @@ int main(int argc, char *argv[]) {
         	exit(EXIT_FAILURE);
     	}
 
+
+
 	// 3. Send Packet to Server
 	char request_buffer[MAX_PACKET_SIZE];
 	uint16_t seq = 1;
@@ -63,11 +69,25 @@ int main(int argc, char *argv[]) {
 	}	
 
 
-	// 4. Open file
 
+	// 4. Open file
+	char filename[256];
+	FILE *outfile = fopen(output_filename, "w");
+	
+	printf("Saving received data to: %s\n", output_filename);
+
+	if(!outfile){
+		fprintf(stderr, "Error: Failed to create output file %s\n", output_filename);
+        	close(sockfd);
+        	exit(EXIT_FAILURE);
+	}
+
+	
 
 	// 5. Go-Back-N
-
+	long long total_bytes_received = 0;
+    	int total_packets_received = 0;
+    	int duplicate_packets_dropped = 0;
 	
 	// 6. Print Statistics
 		
