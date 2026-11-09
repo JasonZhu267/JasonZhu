@@ -127,38 +127,52 @@ int main(int argc, char *argv[]) {
 				}
 
 				// Handle incoming packets
-				if(){
+				if(packet_type == PKT_DATA){
 					
-				}
-				
-				else if(){
-					
-				}
-				
-				else{
-					
-				}
+					if(packet_seq == seq){
+						fwrite(data_buffer, 1, packet_len, outfile);
+                    				bytes_received += packet_len;
+                    				packets_received++;
 
+                    				// Send cumulative ACK for this sequence number
+                    				char ack_buffer[MAX_PACKET_SIZE];
+                    				int ack_len = serialize_packet(PKT_ACK, seq, 0, NULL, 0, ack_buffer);
+                    				
+						lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));	
+					}
+				
+					else if(packet_seq < seq){
+						duplicate_packets_dropped++;
+
+						// Send last successful packet Ack
+                                                char ack_buffer[MAX_PACKET_SIZE];
+                                                int ack_len = serialize_packet(PKT_ACK, seq-1, 0, NULL, 0, ack_buffer);
+                                                
+                                                lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+					}
+				
+					else{
+						// Out-of-order packet
+						if(seq > 1){
+							char ack_buffer[MAX_PACKET_SIZE];
+                        				int ack_len = serialize_packet(PKT_ACK, expected_seq - 1, 0, NULL, 0, ack_buffer);
+                        				lossy_sendto(sockfd, ack_buffer, ack_len, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+						}
+					}
+				}
 			}
-			
 		}
-
-
-
-
 	}
 
-
+	fclose(outfile);
 
 	// 6. Print Statistics
-		
+	printf("\n--- Client Statistics ---\n");
+    	printf("Total data packets accepted: %d\n", packets_received);
+    	printf("Total bytes written to %s: %lld\n", filename, bytes_received);
+    	printf("Duplicate/old packets handled: %d\n", duplicate_packets_dropped);
 
-
-
-
-
-
-
-
+	cloase(sockfd);
+	return 0;
 	
 }
